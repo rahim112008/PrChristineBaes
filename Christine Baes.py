@@ -184,7 +184,7 @@ elif module == "🧬 ConsangWatch":
         else:
             st.success(f"✅ Accouplement acceptable. F_ROH prévu = {f_pred:.3f}")
 
-# ========== MORPHOMÉTRIE (avec caméra + téléchargement) ==========
+# ========== MORPHOMÉTRIE (corrigée – passage d'une PIL Image) ==========
 elif module == "📸 Morphométrie":
     st.header("📸 Morphométrie – Mesures sur images")
     st.markdown("Prenez une photo avec votre smartphone ou téléchargez une image, puis mesurez des distances.")
@@ -217,16 +217,15 @@ elif module == "📸 Morphométrie":
 
         st.markdown("**Cliquez deux points sur l'image pour mesurer**")
 
-        # Conversion en tableau numpy pour le canvas
-        img_array = np.array(image)
+        # Dimensions du canevas = dimensions de l'image
         canvas_height = image.height
-        canvas_width = image.width
+        canvas_width  = image.width
 
         canvas_result = st_canvas(
             fill_color="rgba(255, 0, 0, 0.3)",
             stroke_width=3,
             stroke_color="#ff0000",
-            background_image=img_array,
+            background_image=image,          # <-- PIL Image, pas de numpy array !
             update_streamlit=True,
             height=canvas_height,
             width=canvas_width,

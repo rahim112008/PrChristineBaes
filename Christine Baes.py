@@ -211,14 +211,14 @@ elif module == "🧬 ConsangWatch":
             st.success(f"✅ Accouplement acceptable. F_ROH prévu = {f_pred:.3f}")
 
 # ============================================================
-# MODULE 5 : MORPHOMÉTRIE (NOUVEAU)
+# MODULE 5 : MORPHOMÉTRIE (corrigé)
 # ============================================================
 elif module == "📸 Morphométrie":
     st.header("📸 Morphométrie – Mesures sur images")
-    st.markdown("Téléversez une image d'animal et cliquez sur deux points pour mesurer une distance (en pixels). Vous pouvez étalonner avec une référence connue.")
+    st.markdown("Téléversez une image d'animal, cliquez deux points pour mesurer une distance (pixels). Étalonnez avec une référence connue.")
 
     uploaded_image = st.file_uploader("Image (JPG, PNG)", type=["jpg", "jpeg", "png"])
-    if uploaded_image:
+    if uploaded_image is not None:
         image = Image.open(uploaded_image)
         st.image(image, caption="Image téléversée", use_column_width=True)
 
@@ -230,13 +230,18 @@ elif module == "📸 Morphométrie":
         with col_cal2:
             ref_distance_cm = st.number_input("Distance réelle (cm)", min_value=0.1, value=10.0, step=0.1)
 
-        # Zone de dessin
+        # Conversion de l'image PIL en data URL pour le canvas
+        buffered = BytesIO()
+        image.save(buffered, format="PNG")
+        img_base64 = base64.b64encode(buffered.getvalue()).decode()
+        data_url = f"data:image/png;base64,{img_base64}"
+
         st.markdown("**Cliquez deux points sur l'image pour mesurer**")
         canvas_result = st_canvas(
             fill_color="rgba(255, 0, 0, 0.3)",
             stroke_width=3,
             stroke_color="#ff0000",
-            background_image=image,
+            background_image=data_url,          # <-- CORRECTION : data URL au lieu de l'objet PIL
             update_streamlit=True,
             height=500,
             width=700,
@@ -248,13 +253,11 @@ elif module == "📸 Morphométrie":
         if canvas_result.json_data is not None:
             objects = canvas_result.json_data["objects"]
             if len(objects) >= 2:
-                # Prendre les deux derniers points
                 p1 = objects[-2]
                 p2 = objects[-1]
                 x1, y1 = p1["left"], p1["top"]
                 x2, y2 = p2["left"], p2["top"]
                 dist_px = np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
-                # Conversion avec échelle
                 echelle = ref_distance_cm / ref_distance_px
                 dist_cm = dist_px * echelle
                 st.success(f"Distance mesurée : {dist_px:.1f} pixels → {dist_cm:.2f} cm")

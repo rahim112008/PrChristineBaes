@@ -12,7 +12,7 @@ from streamlit_drawable_canvas import st_canvas
 # Configuration de la page
 st.set_page_config(page_title="LiveGene Suite", page_icon="🧬", layout="wide")
 
-# ----- Barre latérale de navigation -----
+# ----- Barre latérale -----
 st.sidebar.title("LiveGene Suite")
 st.sidebar.markdown("*Pre Christine Baes - Génomique du bétail*")
 module = st.sidebar.radio(
@@ -20,7 +20,7 @@ module = st.sidebar.radio(
     ["🏠 PhenoCollect", "🧪 GenoPipeline", "📊 SelectSim", "🧬 ConsangWatch", "📸 Morphométrie"]
 )
 
-# ----- Fonctions utilitaires -----
+# ----- Utilitaires -----
 def telecharger_csv(df, nom_fichier):
     csv = df.to_csv(index=False).encode()
     st.download_button("📥 Télécharger CSV", csv, nom_fichier, "text/csv")
@@ -28,13 +28,11 @@ def telecharger_csv(df, nom_fichier):
 def telecharger_rapport(contenu, nom_fichier):
     st.download_button("📄 Télécharger rapport", contenu, nom_fichier, "text/plain")
 
-# ----- Stockage session des phénotypes -----
+# ----- Session phénotypes -----
 if 'pheno_data' not in st.session_state:
     st.session_state.pheno_data = pd.DataFrame(columns=["Date", "Animal", "Phénotype", "Valeur brute", "Insémination", "Valeur corrigée", "Analyse"])
 
-# ============================================================
-# MODULE 1 : PHENOCOLLECT
-# ============================================================
+# ========== PHENOCOLLECT ==========
 if module == "🏠 PhenoCollect":
     st.header("📸 PhenoCollect – Saisie et correction des phénotypes")
     with st.form("pheno_form"):
@@ -45,7 +43,6 @@ if module == "🏠 PhenoCollect":
                 ["distance_anogenitale", "taux_conception", "score_boiterie", "etat_corporel", "position_uterus"])
         with col2:
             pheno_value = st.text_input("Valeur / Fichier", placeholder="12.5")
-            # Affichage conditionnel du type d'insémination
             if pheno_type in ["distance_anogenitale", "taux_conception"]:
                 insem_type = st.selectbox("Type d'insémination", ["naturelle", "IA", "TAI"])
             else:
@@ -61,7 +58,7 @@ if module == "🏠 PhenoCollect":
             except:
                 num_val = None
 
-            corrigé = raw_val
+            corrige = raw_val
             analyse = ""
             correction_appliquee = False
 
@@ -69,11 +66,10 @@ if module == "🏠 PhenoCollect":
                 if insem_type == "TAI":
                     correction_appliquee = True
                     if pheno_type == "distance_anogenitale":
-                        corrigé = f"{(num_val * 1.15):.2f}"
+                        corrige = f"{(num_val * 1.15):.2f}"
                     elif pheno_type == "taux_conception":
-                        corrigé = f"{(num_val + 10):.1f}"
+                        corrige = f"{(num_val + 10):.1f}"
 
-            # Analyse simulée
             if num_val is not None:
                 if pheno_type == "distance_anogenitale":
                     analyse = "Fertilité élevée" if num_val > 10 else "Fertilité modérée"
@@ -87,16 +83,15 @@ if module == "🏠 PhenoCollect":
                 analyse = "Image analysée (simulation)"
 
             if correction_appliquee:
-                analyse += f" | ⚠️ Correction TAI : {raw_val} → {corrigé}"
+                analyse += f" | ⚠️ Correction TAI : {raw_val} → {corrige}"
 
             new_entry = pd.DataFrame([[pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"), animal_id, pheno_type, raw_val,
                                        insem_type if pheno_type in ["distance_anogenitale", "taux_conception"] else "—",
-                                       corrigé, analyse]],
+                                       corrige, analyse]],
                                      columns=st.session_state.pheno_data.columns)
             st.session_state.pheno_data = pd.concat([st.session_state.pheno_data, new_entry], ignore_index=True)
             st.success(f"Phénotype ajouté pour {animal_id}. {analyse}")
 
-    # Affichage historique
     st.subheader("Historique des entrées")
     if not st.session_state.pheno_data.empty:
         st.dataframe(st.session_state.pheno_data)
@@ -104,12 +99,10 @@ if module == "🏠 PhenoCollect":
     else:
         st.info("Aucune entrée.")
 
-# ============================================================
-# MODULE 2 : GENOPIPELINE
-# ============================================================
+# ========== GENOPIPELINE ==========
 elif module == "🧪 GenoPipeline":
     st.header("🧪 GenoPipeline – Pipeline génomique automatique")
-    st.markdown("Simulez l'imputation et une GWAS sur données téléversées.")
+    st.markdown("Simulez l'imputation et une GWAS.")
     geno_file = st.file_uploader("Fichier PLINK/VCF (facultatif)", type=["ped", "map", "vcf"])
     if st.button("🚀 Lancer le pipeline"):
         progress_bar = st.progress(0)
@@ -133,12 +126,10 @@ elif module == "🧪 GenoPipeline":
             log_console.code(logs)
             time.sleep(0.8)
 
-        # Résultats simulés
         top_snp = f"rs{np.random.randint(10**7, 9*10**7)}"
         st.success("✅ Pipeline terminé")
         st.write(f"**Top SNP détecté :** {top_snp} (associé à la fertilité, p = 1.2e-8)")
 
-        # Graphique Manhattan factice
         fig, ax = plt.subplots(figsize=(10, 4))
         chr_labels = [f"chr{i}" for i in range(1, 31)]
         pvals = -np.log10(np.random.rand(30))
@@ -149,49 +140,32 @@ elif module == "🧪 GenoPipeline":
         plt.xticks(rotation=45)
         st.pyplot(fig)
 
-        rapport = f"""RAPPORT D'ANALYSE GENOMIQUE
-Date : {pd.Timestamp.now()}
-Pipeline : Eagle + FImpute + GWAS
-Top SNP : {top_snp}
-Conclusion : variant candidat pour la fertilité."""
+        rapport = f"RAPPORT D'ANALYSE GENOMIQUE\nDate : {pd.Timestamp.now()}\nPipeline : Eagle + FImpute + GWAS\nTop SNP : {top_snp}\nConclusion : variant candidat pour la fertilité."
         telecharger_rapport(rapport, "rapport_genomique.txt")
 
-# ============================================================
-# MODULE 3 : SELECTSIM
-# ============================================================
+# ========== SELECTSIM ==========
 elif module == "📊 SelectSim":
     st.header("📊 SelectSim – Simulateur de sélection durable")
-    st.markdown("Réglez les pondérations et observez les projections sur 20 ans.")
     col1, col2 = st.columns([2, 1])
     with col1:
         w_lait = st.slider("Production laitière (%)", 0, 100, 50)
         w_fert = st.slider("Fertilité (%)", 0, 100, 30)
         w_sante = st.slider("Santé & Bien-être (%)", 0, 100 - w_lait - w_fert, 20)
         if st.button("📈 Simuler"):
-            # Simulation simple
-            gain_lait = w_lait * 8  # kg par % de pondération
+            gain_lait = w_lait * 8
             delta_fert = (w_fert * 0.05) - 1.0
             consang = 0.02 + (100 - w_lait) * 0.0003
             with col2:
                 st.metric("Gain lait (kg/an)", f"+{gain_lait:.0f}")
                 st.metric("Évolution fertilité", f"{delta_fert:.2f} unités")
                 st.metric("Consanguinité (F)", f"{consang:.3f}")
-            # Sauvegarde des paramètres
-            rapport_sim = f"""SIMULATION DE SÉLECTION
-Date : {pd.Timestamp.now()}
-Pondérations : Lait {w_lait}%, Fertilité {w_fert}%, Santé {w_sante}%
-Résultats à 20 ans :
-- Gain lait : +{gain_lait:.0f} kg
-- Fertilité : {delta_fert:.2f}
-- Consanguinité : {consang:.3f}"""
+            rapport_sim = f"SIMULATION DE SÉLECTION\nDate : {pd.Timestamp.now()}\nPondérations : Lait {w_lait}%, Fertilité {w_fert}%, Santé {w_sante}%\nRésultats à 20 ans :\n- Gain lait : +{gain_lait:.0f} kg\n- Fertilité : {delta_fert:.2f}\n- Consanguinité : {consang:.3f}"
             telecharger_rapport(rapport_sim, "simulation_selection.txt")
 
-# ============================================================
-# MODULE 4 : CONSANGWATCH
-# ============================================================
+# ========== CONSANGWATCH ==========
 elif module == "🧬 ConsangWatch":
     st.header("🧬 ConsangWatch – Monitoring de la consanguinité")
-    st.subheader("Tendance du coefficient de consanguinité (F_ROH)")
+    st.subheader("Tendance F_ROH")
     annees = [2018, 2019, 2020, 2021, 2022, 2023]
     f_roh = [0.015, 0.018, 0.022, 0.025, 0.029, 0.033]
     fig = go.Figure()
@@ -210,19 +184,30 @@ elif module == "🧬 ConsangWatch":
         else:
             st.success(f"✅ Accouplement acceptable. F_ROH prévu = {f_pred:.3f}")
 
-# ============================================================
-# MODULE 5 : MORPHOMÉTRIE (corrigé)
-# ============================================================
+# ========== MORPHOMÉTRIE (avec caméra + téléchargement) ==========
 elif module == "📸 Morphométrie":
     st.header("📸 Morphométrie – Mesures sur images")
-    st.markdown("Téléversez une image d'animal, cliquez deux points pour mesurer une distance (pixels). Étalonnez avec une référence connue.")
+    st.markdown("Prenez une photo avec votre smartphone ou téléchargez une image, puis mesurez des distances.")
 
-    uploaded_image = st.file_uploader("Image (JPG, PNG)", type=["jpg", "jpeg", "png"])
-    if uploaded_image is not None:
-        image = Image.open(uploaded_image)
-        st.image(image, caption="Image téléversée", use_column_width=True)
+    # Choix du mode d'acquisition
+    mode = st.radio("Mode d'acquisition", ["📷 Prendre une photo", "📁 Télécharger une image"], index=0)
 
-        # Option d'étalonnage
+    image = None
+
+    if mode == "📁 Télécharger une image":
+        uploaded_file = st.file_uploader("Choisissez une image", type=["jpg", "jpeg", "png"])
+        if uploaded_file is not None:
+            image = Image.open(uploaded_file)
+    else:
+        camera_file = st.camera_input("Prenez une photo")
+        if camera_file is not None:
+            image = Image.open(camera_file)
+
+    if image is not None:
+        # Affichage de l'image originale
+        st.image(image, caption="Image capturée", use_column_width=True)
+
+        # Étalonnage
         st.subheader("Étalonnage")
         col_cal1, col_cal2 = st.columns(2)
         with col_cal1:
@@ -230,21 +215,21 @@ elif module == "📸 Morphométrie":
         with col_cal2:
             ref_distance_cm = st.number_input("Distance réelle (cm)", min_value=0.1, value=10.0, step=0.1)
 
-        # Conversion de l'image PIL en data URL pour le canvas
-        buffered = BytesIO()
-        image.save(buffered, format="PNG")
-        img_base64 = base64.b64encode(buffered.getvalue()).decode()
-        data_url = f"data:image/png;base64,{img_base64}"
-
         st.markdown("**Cliquez deux points sur l'image pour mesurer**")
+
+        # Conversion en tableau numpy pour le canvas
+        img_array = np.array(image)
+        canvas_height = image.height
+        canvas_width = image.width
+
         canvas_result = st_canvas(
             fill_color="rgba(255, 0, 0, 0.3)",
             stroke_width=3,
             stroke_color="#ff0000",
-            background_image=data_url,          # <-- CORRECTION : data URL au lieu de l'objet PIL
+            background_image=img_array,
             update_streamlit=True,
-            height=500,
-            width=700,
+            height=canvas_height,
+            width=canvas_width,
             drawing_mode="point",
             point_display_radius=5,
             key="canvas"
@@ -264,4 +249,4 @@ elif module == "📸 Morphométrie":
             else:
                 st.info("Placez au moins deux points sur l'image.")
     else:
-        st.info("Téléversez une image pour commencer la morphométrie.")
+        st.info("Sélectionnez ou prenez une photo pour commencer.")

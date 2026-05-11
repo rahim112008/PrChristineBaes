@@ -7,7 +7,6 @@ from io import BytesIO
 from PIL import Image
 import base64
 import time
-from streamlit_drawable_canvas import st_canvas
 
 # Configuration de la page
 st.set_page_config(page_title="LiveGene Suite", page_icon="🧬", layout="wide")
@@ -28,7 +27,7 @@ def telecharger_csv(df, nom_fichier):
 def telecharger_rapport(contenu, nom_fichier):
     st.download_button("📄 Télécharger rapport", contenu, nom_fichier, "text/plain")
 
-# ----- Sessions (phénotypes + mesures morpho) -----
+# ----- Sessions -----
 if 'pheno_data' not in st.session_state:
     st.session_state.pheno_data = pd.DataFrame(columns=["Date", "Animal", "Phénotype", "Valeur brute", "Insémination", "Valeur corrigée", "Analyse"])
 
@@ -187,13 +186,14 @@ elif module == "🧬 ConsangWatch":
         else:
             st.success(f"✅ Accouplement acceptable. F_ROH prévu = {f_pred:.3f}")
 
-# ========== MORPHOMÉTRIE (avec mesure courbe) ==========
+# ========== MORPHOMÉTRIE (HTML/JS autonome – sans drawable-canvas) ==========
 elif module == "📸 Morphométrie":
     st.header("📸 Morphométrie – Mesures morphométriques sur animal")
     st.markdown("""
     **Étalonnez** l'échelle, choisissez votre mode de mesure, puis cliquez sur l'image.
     - **Droite** : 2 points → distance rectiligne.
     - **Courbe** : plusieurs points → somme des segments (idéal pour suivre le dos, le thorax…).
+    La distance s'affiche directement sur l'image. Ensuite, recopiez la valeur dans le champ ci‑dessous pour l'enregistrer.
     """)
 
     animal_morpho = st.text_input("🐄 ID Animal", value="", placeholder="Ex: HOLCAN1234")
@@ -210,7 +210,7 @@ elif module == "📸 Morphométrie":
             image = Image.open(camera_file)
 
     if image is not None:
-        # --- Étalonnage ---
+        # Étalonnage
         st.subheader("⚖️ Étalonnage")
         col_ref1, col_ref2 = st.columns(2)
         with col_ref1:
@@ -218,81 +218,126 @@ elif module == "📸 Morphométrie":
         with col_ref2:
             ref_cm = st.number_input("Distance réelle correspondante (cm)", min_value=0.1, value=10.0, step=0.1, key="ref_cm")
 
-        # --- Choix du type de mesure ---
+        # Choix du type de mesure
         mesure_type = st.radio("Type de mesure", ["📏 Droite (2 points)", "〰️ Courbe (plusieurs points)"], index=0)
-        drawing_mode = "point" if mesure_type.startswith("📏") else "polygon"
+        max_points = 2 if mesure_type.startswith("📏") else 20  # Nombre max de points pour le mode courbe
 
-        # --- Préparation de l'image pour le canvas ---
+        # Conversion de l'image en base64
         buffered = BytesIO()
         image.save(buffered, format="PNG")
-        img_base64 = base64.b64encode(buffered.getvalue()).decode()
-        data_url = f"data:image/png;base64,{img_base64}"
+        img_b64 = base64.b64encode(buffered.getvalue()).decode()
+        img_w, img_h = image.size
 
-        st.markdown(f"**🎯 Cliquez les points** (mode : {drawing_mode})")
-        canvas_result = st_canvas(
-            fill_color="rgba(255, 0, 0, 0.3)",
-            stroke_width=3,
-            stroke_color="#ff0000",
-            background_image=None,
-            background_image_url=data_url,
-            update_streamlit=True,
-            height=image.height,
-            width=image.width,
-            drawing_mode=drawing_mode,
-            point_display_radius=5,
-            key="canvas"
-        )
+        # HTML / JS du canevas
+        html_canvas = f"""
+        <div style="text-align:center;">
+            <canvas id="morphoCanvas" width="{img_w}" height="{img_h}" style="border:1px solid #ccc; max-width:100%; height:auto; cursor:crosshair;"></canvas>
+            <br>
+            <button onclick="resetPoints()" style="margin:10px;">🗑️ Effacer les points</button>
+            <p id="distanceDisplay" style="font-weight:bold;"></p>
+        </div>
+        <script>
+            const canvas = document.getElementById('morphoCanvas');
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+            img.onload = function() {{
+                ctx.drawImage(img, 0, 0);
+            }};
+            img.src = "data:image/png;base64,{img_b64}";
 
-        # --- Calcul distance ---
-        points_data = canvas_result.json_data["objects"] if canvas_result.json_data is not None else []
-        if len(points_data) >= 2:
-            if drawing_mode == "point":
-                # Droite : 2 derniers points
-                p1 = points_data[-2]
-                p2 = points_data[-1]
-                segments = [(p1, p2)]
-            else:
-                # Polygon : tous les points dans l'ordre
-                segments = [(points_data[i], points_data[i+1]) for i in range(len(points_data)-1)]
+            let points = [];
+            const MAX_POINTS = {max_points};
+            const refPx = {ref_px};
+            const refCm = {ref_cm};
 
-            dist_px_total = 0
-            for p1, p2 in segments:
-                x1, y1 = p1["left"], p1["top"]
-                x2, y2 = p2["left"], p2["top"]
-                dist_px_total += np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+            canvas.addEventListener('click', function(e) {{
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const x = (e.clientX - rect.left) * scaleX;
+                const y = (e.clientY - rect.top) * scaleY;
+                points.push({{x, y}});
+                if (points.length > MAX_POINTS) points = points.slice(-MAX_POINTS);
+                redraw();
+                updateDistance();
+            }});
 
-            echelle = ref_cm / ref_px
-            dist_cm_total = dist_px_total * echelle
+            function redraw() {{
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0);
+                points.forEach((p, i) => {{
+                    ctx.fillStyle = 'red';
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, 4, 0, 2*Math.PI);
+                    ctx.fill();
+                    ctx.fillStyle = 'white';
+                    ctx.font = '12px Arial';
+                    ctx.fillText('P'+(i+1), p.x+6, p.y-6);
+                }});
+                if (points.length >= 2) {{
+                    ctx.strokeStyle = 'lime';
+                    ctx.lineWidth = 2;
+                    for (let i=0; i<points.length-1; i++) {{
+                        ctx.beginPath();
+                        ctx.moveTo(points[i].x, points[i].y);
+                        ctx.lineTo(points[i+1].x, points[i+1].y);
+                        ctx.stroke();
+                    }}
+                }}
+            }}
 
-            if drawing_mode == "point":
-                st.success(f"📏 Distance droite : **{dist_px_total:.1f} pixels** → **{dist_cm_total:.2f} cm**")
-            else:
-                st.success(f"〰️ Longueur courbe ({len(points_data)} points) : **{dist_px_total:.1f} pixels** → **{dist_cm_total:.2f} cm**")
+            function updateDistance() {{
+                if (points.length >= 2) {{
+                    let totalPx = 0;
+                    for (let i=0; i<points.length-1; i++) {{
+                        const dx = points[i+1].x - points[i].x;
+                        const dy = points[i+1].y - points[i].y;
+                        totalPx += Math.sqrt(dx*dx + dy*dy);
+                    }}
+                    const distCm = (totalPx * refCm / refPx).toFixed(2);
+                    document.getElementById('distanceDisplay').innerHTML = 
+                        `Distance mesurée : ${{totalPx.toFixed(1)}} pixels → ${{distCm}} cm`;
+                }} else {{
+                    document.getElementById('distanceDisplay').innerHTML = '';
+                }}
+            }}
 
-            # --- Enregistrement ---
+            function resetPoints() {{
+                points = [];
+                redraw();
+                updateDistance();
+            }}
+        </script>
+        """
+
+        st.components.v1.html(html_canvas, height=img_h + 120, scrolling=False)
+
+        # Champ manuel pour récupérer la mesure (en pixels) et l'enregistrer
+        st.markdown("---")
+        st.subheader("💾 Enregistrer la mesure")
+        distance_px_input = st.number_input("Distance mesurée en pixels (recopiez la valeur affichée ci‑dessus)", min_value=0.0, step=0.1, format="%.1f")
+        distance_cm_calc = (distance_px_input * ref_cm) / ref_px if ref_px != 0 else 0.0
+        st.caption(f"Conversion automatique : {distance_px_input:.1f} px → {distance_cm_calc:.2f} cm")
+
+        if st.button("💾 Enregistrer cette mesure"):
             if animal_morpho.strip() == "":
-                st.warning("⚠️ Veuillez entrer un ID animal pour enregistrer.")
+                st.warning("⚠️ Veuillez entrer un ID animal.")
+            elif distance_px_input <= 0:
+                st.warning("⚠️ Veuillez entrer une distance supérieure à 0.")
             else:
-                if st.button("💾 Enregistrer cette mesure"):
-                    type_label = "droite" if drawing_mode == "point" else "courbe"
-                    n_mesure = len(st.session_state.mesures_morpho[st.session_state.mesures_morpho["Animal"] == animal_morpho]) + 1
-                    new_mesure = pd.DataFrame([[
-                        pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
-                        animal_morpho,
-                        n_mesure,
-                        type_label,
-                        round(dist_px_total, 2),
-                        round(dist_cm_total, 2)
-                    ]], columns=st.session_state.mesures_morpho.columns)
-                    st.session_state.mesures_morpho = pd.concat([st.session_state.mesures_morpho, new_mesure], ignore_index=True)
-                    st.rerun()
-        else:
-            if len(points_data) == 1:
-                st.info("Placez au moins un autre point.")
-            else:
-                st.info("Cliquez pour commencer la mesure.")
-
-        st.image(image, caption="Aperçu", use_column_width=True)
+                type_label = "droite" if max_points == 2 else "courbe"
+                n_mesure = len(st.session_state.mesures_morpho[st.session_state.mesures_morpho["Animal"] == animal_morpho]) + 1
+                new_mesure = pd.DataFrame([[
+                    pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
+                    animal_morpho,
+                    n_mesure,
+                    type_label,
+                    round(distance_px_input, 2),
+                    round(distance_cm_calc, 2)
+                ]], columns=st.session_state.mesures_morpho.columns)
+                st.session_state.mesures_morpho = pd.concat([st.session_state.mesures_morpho, new_mesure], ignore_index=True)
+                st.success(f"Mesure #{n_mesure} enregistrée pour {animal_morpho}.")
+                st.rerun()
 
     # --- Historique des mesures ---
     st.subheader("📋 Mesures enregistrées")

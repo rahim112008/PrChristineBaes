@@ -7,7 +7,7 @@ from io import BytesIO
 from PIL import Image
 import base64
 import time
-from streamlit_drawable_canvas import st_canvas
+import json
 
 # Configuration de la page
 st.set_page_config(page_title="LiveGene Suite", page_icon="🧬", layout="wide")
@@ -184,16 +184,13 @@ elif module == "🧬 ConsangWatch":
         else:
             st.success(f"✅ Accouplement acceptable. F_ROH prévu = {f_pred:.3f}")
 
-# ========== MORPHOMÉTRIE (corrigée – passage d'une PIL Image) ==========
+# ========== MORPHOMÉTRIE (sans drawable-canvas) ==========
 elif module == "📸 Morphométrie":
     st.header("📸 Morphométrie – Mesures sur images")
-    st.markdown("Prenez une photo avec votre smartphone ou téléchargez une image, puis mesurez des distances.")
+    st.markdown("Prenez une photo ou téléchargez une image, puis cliquez deux points pour mesurer une distance.")
 
-    # Choix du mode d'acquisition
     mode = st.radio("Mode d'acquisition", ["📷 Prendre une photo", "📁 Télécharger une image"], index=0)
-
     image = None
-
     if mode == "📁 Télécharger une image":
         uploaded_file = st.file_uploader("Choisissez une image", type=["jpg", "jpeg", "png"])
         if uploaded_file is not None:
@@ -204,48 +201,94 @@ elif module == "📸 Morphométrie":
             image = Image.open(camera_file)
 
     if image is not None:
-        # Affichage de l'image originale
-        st.image(image, caption="Image capturée", use_column_width=True)
+        st.image(image, caption="Image", use_column_width=True)
 
-        # Étalonnage
         st.subheader("Étalonnage")
-        col_cal1, col_cal2 = st.columns(2)
-        with col_cal1:
-            ref_distance_px = st.number_input("Distance de référence (pixels)", min_value=1.0, value=100.0, step=1.0)
-        with col_cal2:
-            ref_distance_cm = st.number_input("Distance réelle (cm)", min_value=0.1, value=10.0, step=0.1)
+        col1, col2 = st.columns(2)
+        with col1:
+            ref_px = st.number_input("Distance de référence (pixels)", min_value=1.0, value=100.0, step=1.0)
+        with col2:
+            ref_cm = st.number_input("Distance réelle (cm)", min_value=0.1, value=10.0, step=0.1)
 
-        st.markdown("**Cliquez deux points sur l'image pour mesurer**")
+        # Convertir l'image en base64 pour l'intégrer dans le HTML
+        buffered = BytesIO()
+        image.save(buffered, format="PNG")
+        img_b64 = base64.b64encode(buffered.getvalue()).decode()
+        img_width, img_height = image.size
 
-        # Dimensions du canevas = dimensions de l'image
-        canvas_height = image.height
-        canvas_width  = image.width
+        # Composant HTML/JS pour la mesure
+        html_code = f"""
+        <div style="text-align:center;">
+            <canvas id="measureCanvas" width="{img_width}" height="{img_height}" style="border:1px solid #ccc; max-width:100%; height:auto;"></canvas>
+            <br>
+            <button onclick="resetPoints()" style="margin-top:10px;">🗑️ Effacer les points</button>
+            <p id="distanceDisplay"></p>
+        </div>
+        <script>
+            const canvas = document.getElementById('measureCanvas');
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+            img.onload = function() {{
+                ctx.drawImage(img, 0, 0);
+            }};
+            img.src = "data:image/png;base64,{img_b64}";
 
-        canvas_result = st_canvas(
-            fill_color="rgba(255, 0, 0, 0.3)",
-            stroke_width=3,
-            stroke_color="#ff0000",
-            background_image=image,          # <-- PIL Image, pas de numpy array !
-            update_streamlit=True,
-            height=canvas_height,
-            width=canvas_width,
-            drawing_mode="point",
-            point_display_radius=5,
-            key="canvas"
-        )
+            let points = [];
+            canvas.addEventListener('click', function(e) {{
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;    // ratio réel CSS
+                const scaleY = canvas.height / rect.height;
+                const x = (e.clientX - rect.left) * scaleX;
+                const y = (e.clientY - rect.top) * scaleY;
+                points.push({{x, y}});
+                if (points.length > 2) points = points.slice(-2);
+                redraw();
+                updateDistance();
+            }});
 
-        if canvas_result.json_data is not None:
-            objects = canvas_result.json_data["objects"]
-            if len(objects) >= 2:
-                p1 = objects[-2]
-                p2 = objects[-1]
-                x1, y1 = p1["left"], p1["top"]
-                x2, y2 = p2["left"], p2["top"]
-                dist_px = np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
-                echelle = ref_distance_cm / ref_distance_px
-                dist_cm = dist_px * echelle
-                st.success(f"Distance mesurée : {dist_px:.1f} pixels → {dist_cm:.2f} cm")
-            else:
-                st.info("Placez au moins deux points sur l'image.")
+            function redraw() {{
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0);
+                points.forEach((p, i) => {{
+                    ctx.fillStyle = 'red';
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, 5, 0, 2*Math.PI);
+                    ctx.fill();
+                    ctx.fillStyle = 'white';
+                    ctx.font = '12px Arial';
+                    ctx.fillText('P'+(i+1), p.x+8, p.y-8);
+                }});
+                if (points.length === 2) {{
+                    ctx.strokeStyle = 'lime';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(points[0].x, points[0].y);
+                    ctx.lineTo(points[1].x, points[1].y);
+                    ctx.stroke();
+                }}
+            }}
+
+            function updateDistance() {{
+                if (points.length === 2) {{
+                    const dx = points[1].x - points[0].x;
+                    const dy = points[1].y - points[0].y;
+                    const distPx = Math.sqrt(dx*dx + dy*dy).toFixed(2);
+                    const distCm = (distPx * {ref_cm} / {ref_px}).toFixed(2);
+                    document.getElementById('distanceDisplay').innerHTML = 
+                        `Distance mesurée : ${{distPx}} pixels → ${{distCm}} cm`;
+                }} else {{
+                    document.getElementById('distanceDisplay').innerHTML = '';
+                }}
+            }}
+
+            function resetPoints() {{
+                points = [];
+                redraw();
+                updateDistance();
+            }}
+        </script>
+        """
+        st.components.v1.html(html_code, height=img_height+100, scrolling=False)
+
     else:
         st.info("Sélectionnez ou prenez une photo pour commencer.")
